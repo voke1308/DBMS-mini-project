@@ -1,0 +1,24 @@
+# =====================================================================
+#  PostgreSQL 16 with the pgvector extension pre-installed.
+#  Start it with:  docker compose up -d
+#  Stop it with:   docker compose down        (add -v to wipe the data)
+# =====================================================================
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: nutripantry-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nutripantry
+      POSTGRES_USER: nutripantry
+      # Read from your shell / .env.local — not hard-coded here.
+      POSTGRES_PASSWORD: ${PGPASSWORD:-change_me_locally}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nutripantry -d nutripantry"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
