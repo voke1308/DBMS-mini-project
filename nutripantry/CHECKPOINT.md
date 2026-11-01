@@ -1,86 +1,89 @@
-# Checkpoint 1 — what to show
+# Pantry frontend checkpoint
 
-## The five-minute demo script
+This increment covers the pantry interface and missing local setup files.
+The project remains incomplete. Status below is based on source review, not a
+claim that all database operations have been executed or marks awarded.
 
-1. `docker compose up -d` — PostgreSQL 16 + pgvector starts.
-2. `npm run db:setup` — every `db/*.sql` file runs in order, printing `ok` per file.
-3. Open `/api/health` — proves the app reaches the database and that
-   **pgvector is installed**, not just planned.
-4. Open `/` — the dashboard counts are real `COUNT(*)` queries, and the
-   cuisine table is a live `GROUP BY … HAVING … AVG`.
-5. Open `/pantry` — reads the `v_user_pantry` **view**; the freshness
-   labels (fresh / expiring soon / expired) are computed in SQL, not JS.
-6. Open `/recommend` — calls the **stored function** `fn_recommend_recipes`,
-   which joins the `v_pantry_match` view against the user's active
-   nutrition goal and returns a blended score.
-7. Sign in at `/login` as `krishna@example.com`, then visit `/admin` — it
-   returns **403**. Sign in as `admin@nutripantry.dev` and it renders.
-   That is the role-based access requirement, demonstrated live.
-8. Show a trigger firing:
+## Evaluation rubric status (50 marks)
 
-   ```sql
-   -- rejected by trg_validate_pantry_item, at the database level
-   INSERT INTO pantry_items (user_id, ingredient_id, quantity, unit, expiry_date)
-   VALUES (2, 14, 100, 'g', CURRENT_DATE - 5);
-   ```
+| Rubric | Marks | Current evidence and remaining work |
+|---|---:|---|
+| ER diagram | 2 | Existing design PDF; reconcile its eight relational tables with the additional vector table in code. |
+| Relational schema, keys, relationships, constraints | 3 | `db/01_schema.sql`; design PDF differs in types/defaults and needs updating. |
+| SQL DDL with constraints | 4 | Nine tables and ALTER/DROP statements in source; live execution evidence pending. |
+| NoSQL/vector creation | 4 | pgvector extension, vector(384) table and cosine index in source; verify on running DB. |
+| Technology justification | 1 | App README explains PostgreSQL and pgvector choices. |
+| DML operations | 4 | Seed INSERT, API upsert and SELECT exist; complete meaningful DELETE and demonstrate all four. |
+| Nested/correlated/recursive and join queries | 4 | Joins and correlated count subqueries in views, nested query in db README; execution evidence and any required recursive example pending. |
+| Advanced SQL: procedure/function, trigger, CTE | 6 | Three functions, one procedure, three triggers and four views in source; add a meaningful CTE example and capture results. |
+| NoSQL/vector feature and CRUD | 7 | Retrieval SQL and embedding invalidation DELETE exist; embedding job only prints planned work. Populate vectors, demonstrate CRUD and similarity retrieval. |
+| Next.js interface | 3 | Dashboard, login, pantry, recommendations and admin pages; pantry increment adds filters and add/top-up UI. Browser verification pending. |
+| Backend/API/database integration | 2 | Existing `pg` pool, route handlers and transactions; pantry form now calls existing POST. Live integration check pending. |
+| Authentication and two roles, including database RBAC | 4 | Signed cookie auth and app-level admin guard exist. Database roles/GRANT or equivalent enforcement are missing. Verify seeded login and access isolation. |
+| Documentation, Git/GitHub | 2 | Setup docs, SQL examples and project tree present. Final report, screenshots and user-created commits pending. |
+| Originality, individual contribution, modification/viva | 4 | Each member must explain and demonstrate their actual work; keep commits and contribution notes accurate. |
+| Total | 50 | Completion status only; no predicted score. |
 
----
+## Work completed in this increment
 
-## Done
+- Pantry summaries, ingredient search, category/freshness filters and empty states.
+- Add/top-up form for signed-in users through the existing API/procedure.
+- Read-only anonymous demo, field labels, status feedback and responsive styles.
+- SQL DATE formatting on the server to avoid timezone shifts in expiry display.
+- Missing `.gitignore` and `.env.example`; corrected app-folder and Docker setup.
+- Removed an unsupported Next.js config key; kept the existing Next.js 14 setting.
 
-- [x] ER diagram and relational schema
-- [x] 9 tables with PK, FK, UNIQUE and CHECK constraints
-- [x] `CREATE` / `ALTER` / `DROP` demonstrated
-- [x] 4 views
-- [x] 2 stored functions + 1 transactional stored procedure
-- [x] 3 triggers
-- [x] Indexes: B-tree, composite, partial, GIN full-text, ivfflat vector
-- [x] Seed data: 3 users, 26 ingredients, 8 recipes, 21 pantry rows
-- [x] Next.js app reading live data on 4 pages
-- [x] 4 API route handlers
-- [x] bcrypt auth with 2 roles and a working `/admin` guard
-- [x] Environment-variable configuration, nothing hard-coded
-- [x] README with full setup instructions
+## Manual acceptance checks still to run
 
-## Next (checkpoint 2)
+Use the seeded demo database only. Record actual outcomes rather than marking
+these passed in advance.
 
-- [ ] Source a real recipe dataset (Kaggle: recipes + nutrition) and load ~500 rows
-- [ ] Generate embeddings with `all-MiniLM-L6-v2` and populate `recipe_embeddings`
-- [ ] Wire stage 2: cosine re-ranking in `/api/recommend` with a real query box
-- [ ] Pantry add/edit/delete UI on top of the existing `POST /api/pantry`
-- [ ] Nutrition goal editor
-- [ ] Ingredient substitution suggestions (vector similarity between ingredients)
-- [ ] Middleware-based route protection instead of per-page checks
-- [ ] Test cases table for the report
+| Check | Expected result |
+|---|---|
+| Anonymous `/pantry` | Demo stock and filters; no add form. |
+| Search `RICE` or surrounding spaces | Case-insensitive, trimmed ingredient matching. |
+| Combine category and freshness | Both filters apply and count updates. |
+| Search a nonexistent ingredient | Empty result message; Clear filters restores stock. |
+| Sign in and select an ingredient | Form displays its unit and current quantity if present. |
+| Add a new ingredient | Success message and refreshed inventory after server save. |
+| Top up existing ingredient by 10 | Quantity increases by 10, rather than becoming 10. |
+| Blank expiry on top-up | Existing expiry remains unchanged. |
+| Past expiry date | DB trigger error displayed; stock unchanged. |
+| Zero/negative quantity | Browser form rejects submission. |
+| Missing/expired session on save | API 401 shown as sign-in feedback. |
+| Failed network request | Error shown, controls enabled for retry. |
+| 375px viewport and keyboard navigation | Controls usable, table scrolls, focus visible. |
+| Different seeded user | Pantry reads/writes use that account, not the demo account. |
 
----
+Automated checks passed: JSX compilation; guest/signed-in/empty server rendering; controlled search/filter/reset handlers; top-up request payload; success refresh; 401 feedback and form preservation; offline seed-password bcrypt comparison. API/router behavior was mocked for handler checks.
+Production build blocked by a Node worker memory allocation failure. Live database
+verification blocked by a Docker engine error. No browser screenshot is claimed.
 
-## Work split (2 members)
+## Intentionally left for later
 
-Both members touch the database *and* the application, as the brief requires.
+- Pantry edit, delete and purchase-batch handling.
+- Nutrition goal editor and saved-recipe controls.
+- Real embedding generation, dataset import and semantic-search UI.
+- Database roles/permissions and stronger session/route protection.
+- CTE/other missing query demonstrations and database test evidence.
+- Framework dependency update and regression verification.
+- Final report and presentation screenshots.
 
-**Member A — database core + recommendation logic**
-- `db/01_schema.sql`, `db/02_indexes.sql`, `db/04_functions.sql`
-- The recommendation function and its scoring
-- `/api/recommend`, `/recommend` page
-- Embedding pipeline (`scripts/embed.mjs`) in checkpoint 2
+## Final report outline from the instructor's email
 
-**Member B — data integrity + application shell**
-- `db/03_views.sql`, `db/05_triggers.sql`, `db/06_seed.sql`
-- Auth, roles and session handling (`src/lib/auth.js`)
-- `/login`, `/pantry`, `/admin` pages, `/api/pantry`, `/api/auth/login`
-- Docker setup, README, test cases
+1. Title page: course title/code, project title, both names and SRNs. Confirm the
+   actual course code; do not invent it.
+2. Abstract: problem, approach and the final demonstrated outcome.
+3. Tech stack and database technology justification.
+4. SQL commands: schema, constraints, indexes, DML, joins/subqueries, functions,
+   procedure, triggers and CTE; include executed results.
+5. Vector commands: extension/table/index creation, embedding model and source
+   text, real CRUD examples, similarity metric and retrieval results.
+6. Next.js project tree (starting point in the app README).
+7. Actual application code and demo screenshots after live testing.
+8. Evaluation rubric completion status, using the table above and updating it
+   only when the corresponding work has been verified.
 
-Keep commits separate per member so the Git history shows individual
-contribution — the brief asks for this explicitly.
-
----
-
-## Known gaps (say these out loud before you're asked)
-
-- Sessions are a signed cookie, not a session table. Fine for a checkpoint,
-  being replaced before final submission.
-- `recipe_embeddings` is empty — the table, the index and the retrieval SQL
-  all exist; only the model call is stubbed. `/api/recommend` falls back to
-  PostgreSQL full-text search so the feature still works end to end today.
-- Only 8 recipes. Enough to show the mechanism; the real dataset lands next.
+The two-member contribution section should describe actual responsibility and
+changes. The design document, implementation and screenshots must agree before
+submission. This checkpoint is not the final report.

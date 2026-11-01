@@ -1,155 +1,115 @@
 # NutriPantry
 
-**Goal-based recipe recommendation from available pantry ingredients**
+A Next.js pantry and recipe recommendation project using PostgreSQL + pgvector.
+This is a partial implementation. See [CHECKPOINT.md](CHECKPOINT.md) for status.
 
-DBMS Experiential Learning — Level 3 Mini Project
+## Tech stack and justification
 
----
+- Next.js 14 App Router and React 18: pages, interactive forms and route handlers.
+- PostgreSQL 16: related users, ingredients, recipes and goals need constraints,
+  joins, views and transactional writes.
+- pgvector: recipe text can be ranked by meaning using 384-dimensional vectors.
+  Storage/index/retrieval code exists; the embedding generation job is unfinished.
+- `pg`: pooled connections and parameterised SQL.
+- `bcryptjs` and signed httpOnly cookies: existing password/session implementation.
 
-## Problem statement
+## Run in the VS Code PowerShell terminal
 
-People throw away food they already own while ordering something else for dinner,
-and people tracking calories give up because planning a meal that both *fits the
-goal* and *uses what's in the fridge* takes more effort than it's worth.
+Start in the repository root:
 
-NutriPantry takes the ingredients a user already has, plus their calorie and
-macronutrient goal, and ranks the recipes they can actually cook right now.
-
-## Why two database paradigms
-
-| Data | Store | Why |
-|---|---|---|
-| Users, pantry stock, recipes, nutrition values, goals | **PostgreSQL** | Highly structured, relational, needs joins, constraints and transactional integrity |
-| Recipe descriptions and instructions | **pgvector** (384-dim embeddings) | Free-text that users query by meaning — "something creamy but not too spicy" — which no `WHERE` clause can express |
-
-The recommender is genuinely two-stage, which is why both are needed:
-
-1. **Stage 1 (SQL)** — filter and rank by pantry overlap and calorie fit.
-   Pure relational work: joins, aggregates, `HAVING`, a stored function.
-2. **Stage 2 (vector)** — re-rank that candidate set by cosine similarity
-   against the user's free-text craving.
-
----
-
-## Tech stack
-
-- **Frontend / API** — Next.js 14 (App Router, server components + route handlers)
-- **Database** — PostgreSQL 16 with the `pgvector` extension
-- **Driver** — `pg` (parameterised queries only)
-- **Auth** — bcrypt password hashing, signed httpOnly session cookie, two roles
-
----
-
-## Setup
-
-### 1. Start PostgreSQL
-
-```bash
-docker compose up -d
-```
-
-This runs `pgvector/pgvector:pg16` on port 5432 with the database, user and
-extension ready.
-
-> No Docker? Install PostgreSQL 16 and the pgvector extension manually, then
-> create a database called `nutripantry`.
-
-### 2. Configure environment
-
-```bash
-cp .env.example .env.local
-```
-
-Edit `.env.local` and set `PGPASSWORD` and `SESSION_SECRET`. Generate a secret with:
-
-```bash
+```powershell
+cd nutripantry
+npm ci
+Copy-Item .env.example .env.local
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-`.env.local` is gitignored — **no credential is ever committed or hard-coded.**
+Edit `.env.local`: choose a `PGPASSWORD` and paste the generated value into
+`SESSION_SECRET`. These values stay local and are ignored by Git.
 
-### 3. Create the schema and load demo data
+Start Docker Desktop, then run:
 
-```bash
-npm install
+```powershell
+docker compose --env-file .env.local up -d
 npm run db:setup
-```
-
-This executes `db/01_schema.sql` through `db/06_seed.sql` in order.
-
-### 4. Run the app
-
-```bash
 npm run dev
 ```
 
-Open <http://localhost:3000>. Check <http://localhost:3000/api/health> first —
-it reports the PostgreSQL version, the pgvector version and the table count.
+`--env-file .env.local` makes Docker use the same password as Next.js.
+For an existing database volume, keep the password used when it was created.
+`db:setup` DROPS and recreates the project tables; use it for the demo database
+and do not run it against data you need to retain.
 
-### Demo accounts
+Open http://localhost:3000/pantry. Check http://localhost:3000/api/health for
+database connectivity. Without Docker, use PostgreSQL 16 with pgvector installed
+and set the matching connection values in `.env.local`.
 
-All use the password `password123`.
+Seeded accounts (the seed file declares the password `password123`):
 
 | Email | Role |
 |---|---|
-| `admin@nutripantry.dev` | admin |
-| `krishna@example.com` | user |
-| `teammate@example.com` | user |
+| admin@nutripantry.dev | admin |
+| krishna@example.com | user |
+| teammate@example.com | user |
 
----
+The seed hash matches `password123` in an offline bcrypt check; live login still needs verification. Anonymous pantry views
+show the existing demo account. Writes require a signed-in session.
 
-## Project layout
+## Pantry increment
 
+- Ingredient search and category/freshness filters with result counts.
+- Total, expiring-soon and expired summary cards.
+- Freshness comes from `v_user_pantry`; the page preserves SQL date values.
+- Signed-in users choose a master ingredient and add a positive quantity.
+- Existing ingredients are topped up, not replaced. The form uses the existing
+  unit (or the master ingredient's default unit) with no unit conversion.
+- Optional expiry, save progress, success/error feedback and refreshed data.
+- Demo mode stays read-only; empty states and narrow-screen layouts are included.
+
+The form calls the existing `POST /api/pantry`, which invokes
+`sp_upsert_pantry_item` in a transaction. Existing DB constraints and triggers
+remain responsible for integrity. Blank expiry retains an existing date; the
+schema stores one row/date per ingredient, not separate purchase batches.
+
+## Next.js project tree
+
+```text
+src/
+  app/
+    layout.jsx                 shared shell
+    globals.css                shared and pantry styles
+    page.jsx                   database dashboard
+    login/page.jsx             existing login form
+    pantry/
+      page.jsx                 server-side pantry and ingredient reads
+      pantry-workspace.jsx     filters, summaries and add/top-up form
+    recommend/page.jsx         SQL recommendation listing
+    admin/page.jsx             existing application role guard
+    api/
+      auth/login/route.js
+      health/route.js
+      pantry/route.js
+      recommend/route.js
+  lib/
+    auth.js
+    db.js
+    embeddings.js
 ```
-nutripantry/
-├── db/
-│   ├── 01_schema.sql      tables, PK/FK, CHECK + UNIQUE constraints
-│   ├── 02_indexes.sql     B-tree, partial, GIN full-text, ivfflat vector
-│   ├── 03_views.sql       4 views
-│   ├── 04_functions.sql   stored functions + a transactional procedure
-│   ├── 05_triggers.sql    3 triggers
-│   └── 06_seed.sql        demo users, ingredients, recipes, pantries
-├── scripts/
-│   ├── setup-db.mjs       runs every db/*.sql in order
-│   └── embed.mjs          embedding pipeline (checkpoint 2)
-├── src/
-│   ├── lib/
-│   │   ├── db.js          pooled connection + withTransaction()
-│   │   ├── auth.js        bcrypt + signed session cookie
-│   │   └── embeddings.js  vector helpers
-│   └── app/
-│       ├── page.jsx       dashboard — live counts from the database
-│       ├── pantry/        pantry listing (reads v_user_pantry)
-│       ├── recommend/     stage-1 recommendations
-│       ├── admin/         admin-only dashboards
-│       ├── login/         sign-in form
-│       └── api/           health, auth, pantry, recommend
-├── docker-compose.yml
-└── .env.example
-```
 
----
+SQL files and query examples: [db/README.md](db/README.md).
 
-## Requirement coverage
+## Verification
 
-| # | Requirement | Where |
-|---|---|---|
-| 3 | Two paradigms: SQL + vector | PostgreSQL + pgvector |
-| 4 | ER diagram + relational schema | design document, `db/01_schema.sql` |
-| 5 | CREATE / ALTER / DROP, keys, constraints, indexes, views | `db/01`–`db/03` |
-| 6 | INSERT / UPDATE / DELETE / SELECT, JOIN, GROUP BY, HAVING, subqueries | `db/03_views.sql`, `src/app/page.jsx`, API routes |
-| 7 | ≥ 4 advanced features | views, stored procedures/functions, triggers, indexing, full-text search, transactions, vector search — **7** |
-| 8 | Vector / semantic search | `db/02` index, `src/lib/embeddings.js`, `/api/recommend` |
-| 9 | Next.js interface | `src/app/` |
-| 10 | API layer, env vars, no hard-coded credentials | `src/lib/db.js`, `.env.example` |
-| 11 | Auth + ≥ 2 roles | `src/lib/auth.js`, `/admin` guard |
-| 12 | Validation and integrity at DB level | CHECK constraints, `trg_validate_pantry_item` |
-| 13 | Security | bcrypt hashes, parameterised queries, httpOnly signed cookies |
-| 15 | Git/GitHub + README | this file |
+Both changed JSX modules compile through the installed Next.js Babel preset.
+A server-render smoke check passed for the guest view without a write form,
+signed-in form, SQL date/freshness display, and an empty pantry.
+A controlled event-handler check also passed search/filter/reset, the top-up request payload, success refresh, and session-error feedback with preserved form input. These checks mock the API/router; browser interactions and database writes remain unverified.
 
----
+The production build was attempted but failed with a Node worker memory allocation
+error in the development environment. Docker's engine returned an error, so live
+login, add/top-up, trigger rejection and database isolation are not verified here.
+Run the manual checks in CHECKPOINT.md once the database is available.
 
-## Status
-
-Checkpoint 1 — schema, seed data and a running app that reads live data.
-See `CHECKPOINT.md` for what is done, what is next, and the work split.
+The dependency installer also reports the existing Next.js 14.2.5 version as
+vulnerable. A framework upgrade and regression check remain separate work before
+public deployment.
