@@ -1,0 +1,17 @@
+.search { margin: 24px 0; padding: 24px; }
+.search h2 { margin-top: 0; }
+.controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.search label { font-size: 14px; font-weight: 600; }
+.search input[type=search], .search select { display: block; width: 100%; margin-top: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px 4px 12px; border-radius: 20px; background: var(--accent-soft); border: 1px solid var(--line); }
+.chip button { background: transparent; color: var(--ink); border: 0; padding: 0 5px; font-size: 22px; }
+.mode { display: block; max-width: 360px; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 20px; }
+.results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.recipe { padding: 20px; }
+.recipeHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.recipe h3 { margin: 0; font-size: 19px; }
+.recipe p { overflow-wrap: anywhere; }
+.recipe summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+@media (max-width: 650px) { .controls, .results { grid-template-columns: minmax(0, 1fr); } .search { padding: 16px; } }
