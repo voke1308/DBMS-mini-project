@@ -15,6 +15,7 @@ export default function PantryWorkspace({ items, ingredients, userName, signedIn
   const [category, setCategory] = useState('all');
   const [freshness, setFreshness] = useState('all');
   const [ingredientId, setIngredientId] = useState('');
+  const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
   const [refreshing, startTransition] = useTransition();
   const [message, setMessage] = useState(null);
@@ -33,29 +34,21 @@ export default function PantryWorkspace({ items, ingredients, userName, signedIn
     setSearch(''); setCategory('all'); setFreshness('all');
   }
 
-  async function addItem(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const fields = new FormData(form);
+  async function changeItem(method, payload, success, afterSave) {
     setMessage(null);
     setSaving(true);
     try {
       const response = await fetch('/api/pantry', {
-        method: 'POST',
+        method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ingredientId: Number(ingredientId), quantity: Number(fields.get('quantity')),
-          unit, expiryDate: fields.get('expiryDate') || null,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(response.status === 401
         ? 'Your session has ended. Sign in again to save.'
         : data.error || 'Could not save this ingredient.');
-      setMessage({ ok: true, text: `${selected.name} ${existing ? 'topped up' : 'added'} successfully.` });
-      form.reset();
-      setIngredientId('');
-      resetFilters();
+      setMessage({ ok: true, text: success });
+      afterSave();
       startTransition(() => router.refresh());
     } catch (error) {
       setMessage({ ok: false, text: error instanceof TypeError
@@ -63,6 +56,44 @@ export default function PantryWorkspace({ items, ingredients, userName, signedIn
     } finally {
       setSaving(false);
     }
+  }
+
+  function addItem(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fields = new FormData(form);
+    changeItem('POST', {
+      ingredientId: Number(ingredientId),
+      quantity: Number(fields.get('quantity')),
+      unit,
+      expiryDate: fields.get('expiryDate') || null,
+    }, `${selected.name} ${existing ? 'topped up' : 'added'} successfully.`, () => {
+      form.reset();
+      setIngredientId('');
+      resetFilters();
+    });
+  }
+
+  function saveEdit(event) {
+    event.preventDefault();
+    const fields = new FormData(event.currentTarget);
+    changeItem('PATCH', {
+      pantryItemId: editing.pantry_item_id,
+      quantity: Number(fields.get('quantity')),
+      expiryDate: fields.get('expiryDate') || null,
+    }, `Updated ${editing.ingredient_name}.`, () => {
+      setEditing(null);
+      resetFilters();
+    });
+  }
+
+  function removeItem(item) {
+    if (!window.confirm(`Remove ${item.ingredient_name} from your pantry?`)) return;
+    changeItem('DELETE', { pantryItemId: item.pantry_item_id },
+      `Removed ${item.ingredient_name}.`, () => {
+        if (editing?.pantry_item_id === item.pantry_item_id) setEditing(null);
+        resetFilters();
+      });
   }
 
   return (
@@ -107,13 +138,21 @@ export default function PantryWorkspace({ items, ingredients, userName, signedIn
           <div className="tablewrap">
             <table>
               <caption className="sr-only">Pantry quantities and expiry dates</caption>
-              <thead><tr><th scope="col">Ingredient</th><th scope="col" className="num">Quantity</th><th scope="col">Expiry</th><th scope="col">Status</th></tr></thead>
+              <thead><tr><th scope="col">Ingredient</th><th scope="col" className="num">Quantity</th><th scope="col">Expiry</th><th scope="col">Status</th>{signedIn && <th scope="col">Actions</th>}</tr></thead>
               <tbody>
                 {visible.map((item) => <tr key={item.ingredient_id}>
                   <td><strong>{item.ingredient_name}</strong><span className="ingredient-category">{item.category}</span></td>
                   <td className="num">{Number(item.quantity)} {item.unit}</td>
                   <td className="expiry-date">{item.expiry_date || 'Not set'}</td>
                   <td><span className={`pill ${item.freshness}`}>{labels[item.freshness] || item.freshness}</span></td>
+                  {signedIn && <td>
+                    <button type="button" className="secondary" disabled={busy}
+                      aria-label={`Edit ${item.ingredient_name}`}
+                      onClick={() => { setEditing(item); setMessage(null); }}>Edit</button>{' '}
+                    <button type="button" className="secondary" disabled={busy}
+                      aria-label={`Remove ${item.ingredient_name}`}
+                      onClick={() => removeItem(item)}>Remove</button>
+                  </td>}
                 </tr>)}
               </tbody>
             </table>
@@ -126,6 +165,20 @@ export default function PantryWorkspace({ items, ingredients, userName, signedIn
         </section>
 
         {signedIn && <aside className="card pantry-add" aria-labelledby="add-title">
+          {editing ? <>
+            <h2 id="add-title">Edit {editing.ingredient_name}</h2>
+            <form key={editing.pantry_item_id} className="stack" onSubmit={saveEdit}>
+              <fieldset disabled={busy}>
+                <label htmlFor="edit-quantity">Total quantity ({editing.unit})</label>
+                <input id="edit-quantity" name="quantity" type="number" min="0" max="99999999.99" step="0.01" defaultValue={editing.quantity} required autoFocus />
+                <label htmlFor="edit-expiry">Expiry date</label>
+                <input id="edit-expiry" name="expiryDate" type="date" defaultValue={editing.expiry_date ?? ''} />
+                <p className="field-help">Leave blank to clear the expiry date.</p>
+                <button type="submit">{busy ? 'Saving...' : 'Save changes'}</button>
+                <button type="button" className="secondary" onClick={() => { setEditing(null); setMessage(null); }}>Cancel</button>
+              </fieldset>
+            </form>
+          </> : <>
           <h2 id="add-title">Add an ingredient</h2>
           <p className="muted">Stock up for your next meal. Existing ingredients are topped up.</p>
           <form className="stack" onSubmit={addItem}>
@@ -144,6 +197,7 @@ export default function PantryWorkspace({ items, ingredients, userName, signedIn
               <button type="submit" disabled={!selected || busy}>{busy ? 'Saving...' : existing ? 'Top up ingredient' : 'Add to pantry'}</button>
             </fieldset>
           </form>
+          </>}
           {message && <p className={message.ok ? 'note' : 'note err'} role={message.ok ? 'status' : 'alert'}>{message.text}</p>}
         </aside>}
       </div>

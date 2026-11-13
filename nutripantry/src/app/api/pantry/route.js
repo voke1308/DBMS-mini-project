@@ -62,3 +62,50 @@ export async function POST(request) {
     return NextResponse.json({ error: err.message }, { status: 400 });
   }
 }
+
+async function changePantryItem(request, remove) {
+  const user = currentUser();
+  if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+  const body = await request.json().catch(() => null);
+  const { pantryItemId, quantity, expiryDate } = body ?? {};
+  if (!Number.isInteger(pantryItemId) || pantryItemId < 1 || pantryItemId > 2147483647) {
+    return NextResponse.json({ error: 'A valid pantry item ID is required.' }, { status: 400 });
+  }
+
+  if (!remove && (!Number.isFinite(quantity) || quantity < 0 || quantity > 99999999.99 ||
+      (expiryDate !== null && (typeof expiryDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(expiryDate))))) {
+    return NextResponse.json({ error: 'Enter a valid quantity and expiry date.' }, { status: 400 });
+  }
+
+  try {
+    const rows = remove
+      ? await query(
+        'DELETE FROM pantry_items WHERE pantry_item_id = $1 AND user_id = $2 RETURNING pantry_item_id',
+        [pantryItemId, user.userId]
+      )
+      : await query(
+        `UPDATE pantry_items SET quantity = $3, expiry_date = $4
+         WHERE pantry_item_id = $1 AND user_id = $2 RETURNING pantry_item_id`,
+        [pantryItemId, user.userId, quantity, expiryDate]
+      );
+
+    if (!rows.length) {
+      return NextResponse.json({ error: 'Pantry item not found.' }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    if (error.code === 'P0001' || error.code === '22007' || error.code === '22008') {
+      return NextResponse.json({ error: 'Use a valid expiry date that is today or later, or leave it blank.' }, { status: 400 });
+    }
+    return NextResponse.json({ error: 'Could not change this pantry item.' }, { status: 500 });
+  }
+}
+
+export function PATCH(request) {
+  return changePantryItem(request, false);
+}
+
+export function DELETE(request) {
+  return changePantryItem(request, true);
+}
