@@ -1,8 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // `pg` is a native-ish driver — keep it out of the bundler.
+  // Keep native / heavy server packages out of the bundler:
+  // `pg` (database driver) and Transformers.js + ONNX Runtime (embeddings).
   experimental: {
-    serverComponentsExternalPackages: ['pg'],
+    serverComponentsExternalPackages: ['pg', '@huggingface/transformers', 'onnxruntime-node', 'sharp'],
   },
 };
 

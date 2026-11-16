@@ -77,3 +77,30 @@ DROP TRIGGER IF EXISTS trg_invalidate_embedding ON recipes;
 CREATE TRIGGER trg_invalidate_embedding
     AFTER UPDATE ON recipes
     FOR EACH ROW EXECUTE FUNCTION trgfn_invalidate_embedding();
+
+
+-- ---------------------------------------------------------------------
+-- 4. The embedding source text also lists the recipe's ingredients
+--    (see v_recipe_embedding_source), so adding, changing or removing a
+--    recipe ingredient must invalidate that recipe's embedding too.
+--    Statement-level would miss which recipe changed, so this is
+--    FOR EACH ROW and handles INSERT, UPDATE and DELETE.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trgfn_invalidate_embedding_on_ingredients()
+RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        DELETE FROM recipe_embeddings WHERE recipe_id = OLD.recipe_id;
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        DELETE FROM recipe_embeddings WHERE recipe_id = NEW.recipe_id;
+    END IF;
+    RETURN NULL;                          -- AFTER trigger: result ignored
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_invalidate_embedding_on_ingredients ON recipe_ingredients;
+CREATE TRIGGER trg_invalidate_embedding_on_ingredients
+    AFTER INSERT OR UPDATE OR DELETE ON recipe_ingredients
+    FOR EACH ROW EXECUTE FUNCTION trgfn_invalidate_embedding_on_ingredients();
