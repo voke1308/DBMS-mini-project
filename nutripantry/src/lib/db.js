@@ -51,3 +51,20 @@ export async function withTransaction(fn) {
     client.release();
   }
 }
+
+// Role and owner context are local to this transaction, including on rollback.
+// The account ID comes from the verified session (or the read-only demo account).
+export function withPantryAccess(userId, work) {
+  return withTransaction(async (client) => {
+    await client.query('SET LOCAL ROLE nutripantry_member');
+    await client.query("SELECT set_config('nutripantry.user_id', $1, true)", [String(userId)]);
+    return work(client);
+  });
+}
+
+export function withAdminReports(work) {
+  return withTransaction(async (client) => {
+    await client.query('SET LOCAL ROLE nutripantry_admin_report');
+    return work(client);
+  });
+}

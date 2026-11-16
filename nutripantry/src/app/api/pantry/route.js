@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { query, withTransaction } from '@/lib/db';
+import { withPantryAccess } from '@/lib/db';
 import { currentUser } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -10,14 +10,14 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   try {
-    const rows = await query(
+    const { rows } = await withPantryAccess(user.userId, (client) => client.query(
       `SELECT ingredient_id, ingredient_name, category, quantity, unit,
               expiry_date, freshness
          FROM v_user_pantry
         WHERE user_id = $1
         ORDER BY ingredient_name`,
       [user.userId]
-    );
+    ));
     return NextResponse.json({ items: rows });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
@@ -47,7 +47,7 @@ export async function POST(request) {
   }
 
   try {
-    await withTransaction(async (client) => {
+    await withPantryAccess(user.userId, async (client) => {
       await client.query('CALL sp_upsert_pantry_item($1, $2, $3, $4, $5)', [
         user.userId,
         ingredientId,
@@ -79,16 +79,16 @@ async function changePantryItem(request, remove) {
   }
 
   try {
-    const rows = remove
-      ? await query(
+    const { rows } = await withPantryAccess(user.userId, (client) => remove
+      ? client.query(
         'DELETE FROM pantry_items WHERE pantry_item_id = $1 AND user_id = $2 RETURNING pantry_item_id',
         [pantryItemId, user.userId]
       )
-      : await query(
+      : client.query(
         `UPDATE pantry_items SET quantity = $3, expiry_date = $4
          WHERE pantry_item_id = $1 AND user_id = $2 RETURNING pantry_item_id`,
         [pantryItemId, user.userId, quantity, expiryDate]
-      );
+      ));
 
     if (!rows.length) {
       return NextResponse.json({ error: 'Pantry item not found.' }, { status: 404 });
