@@ -1,52 +1,75 @@
 #!/usr/bin/env node
 /**
- * CHECKPOINT 2 — generates an embedding for every recipe that does not
- * yet have one and writes it into recipe_embeddings.
+ * Generates recipe embeddings and stores them in recipe_embeddings.
  *
- *   npm run db:embed
+ *   npm run db:embed            embed recipes that are missing or stale
+ *   npm run db:embed -- --all   re-embed every recipe
  *
- * Right now it only reports what WOULD be embedded, so the pipeline is
- * visible and testable before the model is plugged in.
+ * Source text comes from the view v_recipe_embedding_source (title,
+ * description, cuisine and ingredient names). Each vector is written
+ * with the procedure sp_upsert_recipe_embedding, all inside one
+ * transaction: either every embedding is saved or none is.
+ *
+ * The triggers trg_invalidate_embedding and
+ * trg_invalidate_embedding_on_ingredients delete a recipe's vector when
+ * its text or ingredients change, so a plain run picks those up again.
  */
-import pg from 'pg';
+import { connect } from './db-client.mjs'; // loads .env.local first
+import {
+  embedMany,
+  toVectorLiteral,
+  EMBEDDING_MODEL_NAME,
+  EMBEDDING_DIMS,
+} from '../src/lib/embedder.mjs';
 
-const client = new pg.Client(
-  process.env.DATABASE_URL
-    ? { connectionString: process.env.DATABASE_URL }
-    : {
-        host: process.env.PGHOST || 'localhost',
-        port: Number(process.env.PGPORT || 5432),
-        database: process.env.PGDATABASE,
-        user: process.env.PGUSER,
-        password: process.env.PGPASSWORD,
-      }
-);
+const all = process.argv.includes('--all');
+const client = await connect();
 
-await client.connect();
+try {
+  const { rows } = await client.query(
+    `SELECT recipe_id, title, source_text, has_embedding, is_stale
+       FROM v_recipe_embedding_source
+      WHERE $1 OR NOT has_embedding OR is_stale
+      ORDER BY recipe_id`,
+    [all]
+  );
 
-// The trigger trg_invalidate_embedding deletes a row here whenever a
-// recipe's text changes, so this query also picks up edited recipes.
-const { rows } = await client.query(`
-  SELECT r.recipe_id,
-         r.title || '. ' || r.description || ' Cuisine: ' || r.cuisine_type AS source_text
-  FROM   recipes r
-  LEFT   JOIN recipe_embeddings e ON e.recipe_id = r.recipe_id
-  WHERE  e.recipe_id IS NULL
-  ORDER  BY r.recipe_id
-`);
+  if (rows.length === 0) {
+    console.log('Every recipe already has an up-to-date embedding. Use --all to rebuild.');
+  } else {
+    console.log(`Embedding ${rows.length} recipe(s) with ${EMBEDDING_MODEL_NAME} (${EMBEDDING_DIMS} dims)...`);
+    console.log('(the first run downloads the model, about 90 MB)\n');
 
-console.log(`${rows.length} recipe(s) need an embedding:\n`);
-for (const r of rows) {
-  console.log(`  [${r.recipe_id}] ${r.source_text.slice(0, 72)}…`);
+    const started = Date.now();
+    const vectors = await embedMany(rows.map((r) => r.source_text));
+
+    await client.query('BEGIN');
+    for (let i = 0; i < rows.length; i++) {
+      await client.query('CALL sp_upsert_recipe_embedding($1, $2::vector, $3, $4)', [
+        rows[i].recipe_id,
+        toVectorLiteral(vectors[i]),
+        rows[i].source_text,
+        EMBEDDING_MODEL_NAME,
+      ]);
+      const why = !rows[i].has_embedding ? 'new' : rows[i].is_stale ? 'stale' : 'rebuilt';
+      console.log(`  [${String(rows[i].recipe_id).padStart(2)}] ${rows[i].title.padEnd(28)} ${why}`);
+    }
+    await client.query('COMMIT');
+    console.log(`\nSaved ${rows.length} embedding(s) in ${((Date.now() - started) / 1000).toFixed(1)} s.`);
+  }
+
+  const [summary] = (
+    await client.query(`
+      SELECT COUNT(*)                                   AS recipes,
+             COUNT(*) FILTER (WHERE has_embedding)      AS embedded,
+             COUNT(*) FILTER (WHERE is_stale)           AS stale
+        FROM v_recipe_embedding_source`)
+  ).rows;
+  console.log(`Status: ${summary.embedded}/${summary.recipes} recipes embedded, ${summary.stale} stale.`);
+} catch (err) {
+  await client.query('ROLLBACK').catch(() => {});
+  console.error(`\nEmbedding failed: ${err.message}`);
+  process.exitCode = 1;
+} finally {
+  await client.end();
 }
-
-console.log(`
-Next step (checkpoint 2):
-  1. pip install sentence-transformers  (or run a small local embed API)
-  2. encode source_text with all-MiniLM-L6-v2  -> 384 floats
-  3. INSERT INTO recipe_embeddings (recipe_id, embedding, source_text)
-     VALUES ($1, $2::vector, $3)
-  4. REINDEX idx_embeddings_cosine once all rows are in
-`);
-
-await client.end();

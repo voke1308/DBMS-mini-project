@@ -1,12 +1,14 @@
 import Link from 'next/link';
 import { query } from '@/lib/db';
-import { currentUserOrDemo } from '@/lib/auth';
+import { currentUser, currentUserOrDemo } from '@/lib/auth';
 import IngredientSearch from './ingredient-search';
+import RecipeSearch from './recipe-search';
 import styles from './search.module.css';
 
 export const dynamic = 'force-dynamic';
 
 export default async function RecommendPage({ searchParams = {} }) {
+  const signedIn = Boolean(currentUser());
   const user = currentUserOrDemo();
   const raw = searchParams.ingredient;
   const values = Array.isArray(raw) ? raw : raw ? [raw] : [];
@@ -14,6 +16,7 @@ export default async function RecommendPage({ searchParams = {} }) {
     .filter((n) => Number.isSafeInteger(n) && n > 0 && n <= 2147483647).slice(0, 100);
   const complete = searchParams.mode === 'complete';
   let ingredients = [], selected = [], rows = [], error = false;
+  let embedded = null, recent = [];
   try {
     ingredients = await query('SELECT ingredient_id, name FROM ingredients ORDER BY name');
     selected = requested.filter((id) => ingredients.some((i) => i.ingredient_id === id));
@@ -48,12 +51,37 @@ export default async function RecommendPage({ searchParams = {} }) {
   } catch {
     error = true;
   }
+  try {
+    // How many recipes the vector search can see right now.
+    [embedded] = await query(
+      `SELECT COUNT(*) FILTER (WHERE has_embedding AND NOT is_stale) AS ready,
+              COUNT(*)                                            AS total
+         FROM v_recipe_embedding_source`
+    );
+    // Latest natural-language searches and the recipe that ranked first
+    // (LEFT JOIN: a search may have had no result).
+    recent = await query(
+      `SELECT l.log_id, l.query_text, r.title AS top_recipe, l.rank_score,
+              to_char(l.searched_at, 'DD Mon HH24:MI') AS searched_at
+         FROM search_log l
+         LEFT JOIN recipes r ON r.recipe_id = l.recipe_id
+        WHERE l.user_id = $1 AND l.query_text <> '(no query)'
+        ORDER BY l.searched_at DESC
+        LIMIT 5`,
+      [user.userId]
+    );
+  } catch {
+    // Search extras need db/07_search.sql; the ingredient search still works without them.
+    embedded = null;
+    recent = [];
+  }
   const searching = values.length > 0;
   return (
     <>
       <p className="eyebrow">Cook with what you have</p>
       <h2 className="page-title">Find your next meal</h2>
       <p className="muted">Choose the ingredients available to you and discover matching recipes.</p>
+      <RecipeSearch signedIn={signedIn} embedded={embedded} />
       <IngredientSearch ingredients={ingredients} selected={selected} complete={complete} />
       {error ? <p className="note err" role="alert">Recipes could not be loaded. Check the database connection and try again.</p> : <>
         <h2>{searching ? `Matching recipes (${rows.length})` : 'Recommended from your pantry'}</h2>
@@ -71,6 +99,22 @@ export default async function RecommendPage({ searchParams = {} }) {
             </article>)}
           </div>}
         <p><Link href="/pantry">Manage your pantry &rarr;</Link></p>
+        {recent.length > 0 && <>
+          <h2>Recent searches</h2>
+          <div className="tablewrap">
+            <table>
+              <thead><tr><th>Search</th><th>Top result</th><th className="num">Score</th><th className="num">When</th></tr></thead>
+              <tbody>
+                {recent.map((s) => <tr key={s.log_id}>
+                  <td>{s.query_text}</td>
+                  <td>{s.top_recipe ?? <span className="muted">no match</span>}</td>
+                  <td className="num">{s.rank_score == null ? '—' : Number(s.rank_score).toFixed(3)}</td>
+                  <td className="num">{s.searched_at}</td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        </>}
       </>}
     </>
   );

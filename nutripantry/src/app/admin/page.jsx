@@ -1,4 +1,4 @@
-import { query } from '@/lib/db';
+import { withAdminReports } from '@/lib/db';
 import { currentUser } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -29,12 +29,14 @@ export default async function AdminPage() {
   let error = null;
 
   try {
-    popular = await query(
-      'SELECT name, category, pantry_count, recipe_count FROM v_admin_popular_ingredients LIMIT 10'
-    );
-    overview = await query(
-      'SELECT title, cuisine_type, ingredient_count, calories FROM v_recipe_overview ORDER BY ingredient_count DESC'
-    );
+    await withAdminReports(async (client) => {
+      ({ rows: popular } = await client.query(
+        'SELECT name, category, pantry_count, recipe_count FROM v_admin_popular_ingredients LIMIT 10'
+      ));
+      ({ rows: overview } = await client.query(
+        'SELECT title, cuisine_type, ingredient_count, calories FROM v_recipe_overview ORDER BY ingredient_count DESC'
+      ));
+    });
   } catch (e) {
     error = e.message;
   }

@@ -8,8 +8,12 @@ This is a partial implementation. See [CHECKPOINT.md](CHECKPOINT.md) for status.
 - Next.js 14 App Router and React 18: pages, interactive forms and route handlers.
 - PostgreSQL 16: related users, ingredients, recipes and goals need constraints,
   joins, views and transactional writes.
-- pgvector: recipe text can be ranked by meaning using 384-dimensional vectors.
-  Storage/index/retrieval code exists; the embedding generation job is unfinished.
+- pgvector: recipes are ranked by meaning using 384-dimensional vectors stored
+  next to the relational data, so one SQL query can combine similarity with
+  pantry and goal data. HNSW index, cosine distance.
+- Transformers.js (`@huggingface/transformers`): runs all-MiniLM-L6-v2 locally in
+  Node to embed recipes and search text. Free, no API key, works offline after
+  the first model download.
 - `pg`: pooled connections and parameterised SQL.
 - `bcryptjs` and signed httpOnly cookies: existing password/session implementation.
 
@@ -32,8 +36,12 @@ Start Docker Desktop, then run:
 ```powershell
 docker compose --env-file .env.local up -d
 npm run db:setup
+npm run db:embed
 npm run dev
 ```
+
+`db:embed` stores a vector for every recipe. The first run downloads the
+embedding model (about 90 MB) once. Re-run it after `db:setup`.
 
 `--env-file .env.local` makes Docker use the same password as Next.js.
 For an existing database volume, keep the password used when it was created.
@@ -83,7 +91,9 @@ src/
     pantry/
       page.jsx                 server-side pantry and ingredient reads
       pantry-workspace.jsx     filters, summaries and add/top-up form
-    recommend/page.jsx         SQL recommendation listing
+    recommend/
+      page.jsx                 stage-1 recommendations, recent searches
+      recipe-search.jsx        natural-language search (hybrid / meaning only)
     admin/page.jsx             existing application role guard
     api/
       auth/login/route.js
@@ -93,10 +103,32 @@ src/
   lib/
     auth.js
     db.js
-    embeddings.js
+    embeddings.js              re-exports embedder.mjs for route handlers
+    embedder.mjs               all-MiniLM-L6-v2 via Transformers.js
+scripts/
+  setup-db.mjs                 runs db/*.sql in order
+  embed.mjs                    npm run db:embed
+  search.mjs                   npm run db:search -- "query"
+  vector-demo.mjs              npm run db:vector-demo (vector CRUD walkthrough)
+  db-client.mjs                .env.local loader + pg client for the scripts
 ```
 
 SQL files and query examples: [db/README.md](db/README.md).
+
+## Recipe search and recommendations
+
+- `/recommend` has a search box: type a craving ("warm comforting vegetarian
+  curry") and choose **Best for me** (hybrid) or **Closest in meaning only**.
+- The text is embedded with all-MiniLM-L6-v2 and compared to every recipe vector
+  with pgvector's `<=>` (cosine distance) inside PostgreSQL.
+- Hybrid ranking, `fn_hybrid_search`: `0.7 × relevance + 0.2 × pantry + 0.1 × goal fit`,
+  where relevance is the similarity rescaled so the closest recipe is 1.
+  The results table shows every component so the order can be explained.
+- Without a typed query, `fn_recommend_recipes` ranks by pantry overlap and goal fit.
+- Every search is written to `search_log` in a transaction and listed under
+  "Recent searches". If the model cannot load, the API falls back to full-text search.
+- Demo SQL: `db/demo/recipe_queries.sql`. Terminal demos: `npm run db:search`,
+  `npm run db:vector-demo`.
 
 ## Verification
 
@@ -113,3 +145,14 @@ Run the manual checks in CHECKPOINT.md once the database is available.
 The dependency installer also reports the existing Next.js 14.2.5 version as
 vulnerable. A framework upgrade and regression check remain separate work before
 public deployment.
+
+### Recipe search increment
+
+Checked on PostgreSQL 16.16 with pgvector 0.7.4 (the Docker image ships a newer
+pgvector, which also supports HNSW): `db:setup`, `db:embed` (16/16 recipes),
+`db/demo/recipe_queries.sql`, `db:search` and `db:vector-demo` all ran without
+errors. The embedding output matches the published all-MiniLM-L6-v2 reference
+values. `next build` succeeded; with `next start`, sign-in, hybrid and
+meaning-only search, the 401 for signed-out requests, search logging and the
+full-text fallback were exercised in a headless browser at 1100px and 375px.
+Not yet run on the team's own Docker setup.

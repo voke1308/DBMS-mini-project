@@ -11,12 +11,12 @@ claim that all database operations have been executed or marks awarded.
 | ER diagram | 2 | Existing design PDF; reconcile its eight relational tables with the additional vector table in code. |
 | Relational schema, keys, relationships, constraints | 3 | `db/01_schema.sql`; design PDF differs in types/defaults and needs updating. |
 | SQL DDL with constraints | 4 | Nine tables and ALTER/DROP statements in source; live execution evidence pending. |
-| NoSQL/vector creation | 4 | pgvector extension, vector(384) table and cosine index in source; verify on running DB. |
+| NoSQL/vector creation | 4 | pgvector extension, `vector(384)` table, HNSW cosine index (`02_indexes.sql`) and `07_search.sql` executed on PostgreSQL 16 + pgvector 0.7.4. Re-check on the Docker database. |
 | Technology justification | 1 | App README explains PostgreSQL and pgvector choices. |
 | DML operations | 4 | Seed INSERT, API upsert and SELECT exist; complete meaningful DELETE and demonstrate all four. |
-| Nested/correlated/recursive and join queries | 4 | Joins and correlated count subqueries in views, nested query in db README; execution evidence and any required recursive example pending. |
-| Advanced SQL: procedure/function, trigger, CTE | 6 | Three functions, one procedure, three triggers and four views in source; add a meaningful CTE example and capture results. |
-| NoSQL/vector feature and CRUD | 7 | Retrieval SQL and embedding invalidation DELETE exist; embedding job only prints planned work. Populate vectors, demonstrate CRUD and similarity retrieval. |
+| Nested/correlated/recursive and join queries | 4 | `db/demo/recipe_queries.sql`: multi-table joins, HAVING, nested NOT EXISTS, correlated subqueries, recursive CTE; executed with results. Pantry-side queries still to capture. |
+| Advanced SQL: procedure/function, trigger, CTE | 6 | Added `fn_hybrid_search` (CTE chain + window functions), `fn_semantic_search`, `sp_upsert_recipe_embedding`, ingredient-change embedding trigger; executed. Pantry procedure/trigger evidence still to capture. |
+| NoSQL/vector feature and CRUD | 7 | Real all-MiniLM-L6-v2 embeddings (`npm run db:embed`), similarity retrieval, hybrid ranking and full CRUD walkthrough (`npm run db:vector-demo`) executed. Screenshots on the team machine pending. |
 | Next.js interface | 3 | Dashboard, login, pantry, recommendations and admin pages; pantry increment adds filters and add/top-up UI. Browser verification pending. |
 | Backend/API/database integration | 2 | Existing `pg` pool, route handlers and transactions; pantry form now calls existing POST. Live integration check pending. |
 | Authentication and two roles, including database RBAC | 4 | Signed cookie auth and app-level admin guard exist. Database roles/GRANT or equivalent enforcement are missing. Verify seeded login and access isolation. |
@@ -63,7 +63,6 @@ verification blocked by a Docker engine error. No browser screenshot is claimed.
 
 - Pantry edit, delete and purchase-batch handling.
 - Nutrition goal editor and saved-recipe controls.
-- Real embedding generation, dataset import and semantic-search UI.
 - Database roles/permissions and stronger session/route protection.
 - CTE/other missing query demonstrations and database test evidence.
 - Framework dependency update and regression verification.
