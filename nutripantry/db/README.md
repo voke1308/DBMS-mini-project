@@ -1,15 +1,18 @@
 # Database layer
 
-Run the files in numeric order. `npm run db:setup` does this for you.
+Run the files in numeric order. `npm run db:setup` does this for you, then
+`npm run db:embed` stores the recipe vectors.
 
 | File | Contents |
 |---|---|
 | `01_schema.sql` | `CREATE EXTENSION vector`, 9 tables, primary keys, foreign keys, `UNIQUE` and `CHECK` constraints, two `ALTER TABLE` statements |
-| `02_indexes.sql` | B-tree indexes, one composite **partial** index, a generated `tsvector` column with a **GIN** index, and an **ivfflat** cosine index for pgvector |
+| `02_indexes.sql` | B-tree indexes, one composite **partial** index, a generated `tsvector` column with a **GIN** index, and an **HNSW** cosine index for pgvector |
 | `03_views.sql` | `v_recipe_overview`, `v_user_pantry`, `v_pantry_match`, `v_admin_popular_ingredients` |
 | `04_functions.sql` | `fn_nutrition_fit`, `fn_active_goal_calories`, `fn_recommend_recipes`, and the transactional procedure `sp_upsert_pantry_item` |
-| `05_triggers.sql` | Pantry validation, single-active-goal enforcement, embedding invalidation |
-| `06_seed.sql` | Demo users, 26 ingredients, 8 recipes, pantries, goals, saved recipes, search log |
+| `05_triggers.sql` | Pantry validation, single-active-goal enforcement, embedding invalidation (recipe text and recipe ingredients) |
+| `06_seed.sql` | Demo users, 26 ingredients, 16 recipes, pantries, goals, saved recipes, search log |
+| `07_search.sql` | `v_recipe_embedding_source`, `sp_upsert_recipe_embedding`, `fn_semantic_search`, and the CTE-based `fn_hybrid_search` |
+| `demo/recipe_queries.sql` | Read-only demo queries (joins, HAVING, correlated and nested subqueries, CTE, recursive CTE, vector k-NN, index plan). **Not** run by setup |
 
 ## Tables
 
@@ -27,13 +30,36 @@ Run the files in numeric order. `npm run db:setup` does this for you.
 
 ## Vector data model
 
-- **What is embedded** — `title + description + cuisine_type` per recipe
-- **Model** — `all-MiniLM-L6-v2`, 384 dimensions
-- **Storage** — `recipe_embeddings.embedding` of type `vector(384)`
-- **Metric** — cosine distance, the `<=>` operator
-- **Index** — `ivfflat (embedding vector_cosine_ops)`
-- **Retrieval** — stage 1 narrows candidates in SQL, stage 2 re-ranks that
-  candidate set by cosine distance and blends the two scores 70/30
+- **What is embedded** — one text per recipe, built by the view
+  `v_recipe_embedding_source`: title, description, cuisine and the
+  ingredient names (`string_agg ... ORDER BY name`)
+- **Model** — `sentence-transformers/all-MiniLM-L6-v2`, 384 dimensions, run
+  locally in Node with Transformers.js (`src/lib/embedder.mjs`); mean pooling,
+  L2-normalised. No API key; the model (about 90 MB) downloads on first use
+- **Storage** — `recipe_embeddings.embedding` of type `vector(384)`, one row per
+  recipe, plus `source_text`, `model_name` and `embedded_at` as metadata
+- **Metric** — cosine distance, the `<=>` operator; similarity = 1 − distance
+- **Index** — `hnsw (embedding vector_cosine_ops)`. HNSW instead of IVFFlat
+  because IVFFlat is trained on the rows present at build time (none here) and,
+  with few rows, `probes = 1` silently drops results
+- **Keeping vectors in sync** — triggers delete a recipe's vector when its
+  title, description, cuisine or ingredients change; `is_stale` in
+  `v_recipe_embedding_source` also flags any mismatch. `npm run db:embed`
+  re-embeds only missing or stale rows
+- **Retrieval**
+  - `fn_semantic_search(query, k)` — pure k-NN: `ORDER BY embedding <=> query LIMIT k`
+  - `fn_hybrid_search(user, query, k)` — CTE chain: cosine similarity →
+    min-max rescaled *relevance* → joined with pantry overlap and calorie fit →
+    `score = 0.7·relevance + 0.2·pantry + 0.1·goal_fit` → `RANK()`
+  - With no typed query the app uses `fn_recommend_recipes` (pantry 60% + goal 40%)
+
+## Vector commands
+
+| Command | What it does |
+|---|---|
+| `npm run db:embed` | Embed recipes that are missing or stale (`-- --all` rebuilds every one) |
+| `npm run db:search -- "warm vegetarian curry"` | Prints vector-only and hybrid results for a typed query (`--user 3`, `--limit 5`) |
+| `npm run db:vector-demo` | Full vector CRUD on a throwaway recipe: create, k-NN read, update + re-embed, delete |
 
 ## Useful queries for the demo
 

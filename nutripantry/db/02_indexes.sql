@@ -35,7 +35,15 @@ CREATE INDEX IF NOT EXISTS idx_recipes_fts ON recipes USING GIN (search_tsv);
 
 -- ---- Vector similarity index (advanced feature) ----------------------
 -- Cosine distance (<=>) matches how sentence-transformer vectors are
--- normally compared. Rebuild with more lists once the corpus grows.
-CREATE INDEX IF NOT EXISTS idx_embeddings_cosine
-    ON recipe_embeddings USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 10);
+-- normally compared.
+--
+-- HNSW rather than IVFFlat: IVFFlat learns its cluster centroids from the
+-- rows present when the index is built. This index is created before any
+-- embedding exists, and with only a few recipes and lists = 10 the default
+-- probes = 1 would search one cluster and silently drop most results.
+-- HNSW needs no training step, works on an empty table and keeps high
+-- recall as rows are added. Requires pgvector 0.5 or newer.
+DROP INDEX IF EXISTS idx_embeddings_cosine;
+CREATE INDEX idx_embeddings_cosine
+    ON recipe_embeddings USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
