@@ -8,9 +8,12 @@
     "build": "next build",
     "start": "next start",
     "db:setup": "node scripts/setup-db.mjs",
-    "db:embed": "node scripts/embed.mjs"
+    "db:embed": "node scripts/embed.mjs",
+    "db:search": "node scripts/search.mjs",
+    "db:vector-demo": "node scripts/vector-demo.mjs"
   },
   "dependencies": {
+    "@huggingface/transformers": "4.3.2",
     "bcryptjs": "2.4.3",
     "next": "14.2.5",
     "pg": "8.12.0",
